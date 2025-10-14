@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: super-cool-python-app-1
+  labels:
+    app: super-cool-python-app-1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: super-cool-python-app-1
+  template:
+    metadata:
+      labels:
+        app: super-cool-python-app-1
+    spec:
+      containers:
+      - name: super-cool-python-app-1
+        image: javamllama/super-cool-python-app-1:v1
+        ports:
+        - containerPort: 5000
+

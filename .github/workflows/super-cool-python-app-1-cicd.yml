@@ -1,0 +1,93 @@
+name: CICD
+
+on:
+  push:
+    paths:
+      - src/**
+    branches:
+      - main
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    outputs:
+      git_sha_short: ${{ steps.commit.outputs.short }}
+    steps:
+      - id: commit
+        uses: prompt/actions-commit-hash@v3
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with: 
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: javamllama/super-cool-python-app-1:${{ steps.commit.outputs.short }}
+  cd:
+    runs-on: self-hosted
+    needs: ci
+    steps:
+      - name: Clone the repo
+        uses: actions/checkout@v3
+
+      - name: Update the values file
+        shell: bash
+        run: |
+          pip install yq
+          echo ${{ needs.ci.outputs.git_sha_short }}
+          yq -Yi '.image.tag = "${{ needs.ci.outputs.git_sha_short }}"' charts/super-cool-python-app-1/values-dev.yaml
+          cat charts/super-cool-python-app-1/values-dev.yaml
+
+      - name: Push values.yml change back to repo
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: 'Updating values.yxml with new commit id ${{ needs.ci.outputs.git_sha_short }}'
+
+      - name: Install ArgoCD CLI
+        shell: bash
+        run: |
+          curl -ksSL -o argocd https://argocd-server.argocd/download/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv ./argocd /usr/local/bin/argocd
+
+      - name: Argocd ensure repo and app
+        shell: bash
+        run: |
+          # First login
+          argocd login argocd-server.argocd \
+            --insecure \
+            --grpc-web \
+            --username ${{ secrets.ARGO_USER }} \
+            --password ${{ secrets.ARGO_PASSWORD }}
+          
+          # Create the argocd repo if it doesn't exist
+          repo="https://github.com/unicorn-home/super-cool-python-app-1.git"
+          argocd repo list | grep -q $repo || argocd repo add $repo
+          
+          # Create the app if it doesn't exist
+          argocd app get super-cool-python-app-1 || argocd app create super-cool-python-app-1 \
+            --repo $repo \
+            --path charts/super-cool-python-app-1 \
+            --dest-namespace dev \
+            --dest-server https://kubernetes.default.svc \
+            --values values-dev.yaml \
+            --revision main \
+            --sync-policy manual \
+            --sync-option CreateNamespace=true
+
+      - name: Argocd app sync
+        shell: bash
+        run: |
+          # First login
+          argocd login argocd-server.argocd \
+            --insecure \
+            --grpc-web \
+            --username ${{ secrets.ARGO_USER }} \
+            --password ${{ secrets.ARGO_PASSWORD }}
+          
+          # then trigger the sync and wait for the results
+          argocd app sync super-cool-python-app-1
+          argocd app wait super-cool-python-app-1 --timeout 180
+
